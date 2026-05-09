@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-09
+
+### Fixed
+- `/admin/reauth` returned a permanent 404 in production Docker images even with `IS_HOSTED=true` and `ADMIN_EMAILS` configured, leaving admins unable to elevate their session. The page performed its `env.IS_HOSTED` / `env.ADMIN_EMAILS` `notFound()` checks before any dynamic API call, so `next build` (which doesn't see admin env by design) statically prerendered it as a 404 and baked that into the image. Every other admin page already declared `export const dynamic = "force-dynamic"`; reauth was the only miss. Added the directive ([#113](https://github.com/openplaud/openplaud/pull/113)).
+
 ## [0.4.1] - 2026-05-09
 
 ### Fixed
