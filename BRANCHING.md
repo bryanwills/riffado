@@ -22,15 +22,36 @@ Every push to `main` additionally publishes `:dev` — opt-in rolling image for 
 
 ## Cutting a release
 
-1. Land the last PR into `main`. CI must be green.
-2. Update `CHANGELOG.md`: move items from `[Unreleased]` into a new `[X.Y.Z]` section with today's date. Commit to `main`.
-3. Tag and push:
-   ```bash
-   git tag v0.2.0
-   git push origin v0.2.0
-   ```
-4. Wait for `docker.yml` and `release.yml` to finish.
-5. Review the draft release on GitHub, edit notes if needed, publish.
+`main` is protected with required status checks, so releases go through a PR like everything else. The release script handles this in two phases.
+
+### Phase 1 — open the release PR
+
+From a clean `main` that's in sync with `origin/main`:
+
+```bash
+bun scripts/release.ts <major|minor|patch>
+# or an explicit version:
+bun scripts/release.ts 0.6.0
+```
+
+This bumps `package.json`, rewrites `## [Unreleased]` → `## [X.Y.Z] - <date>` in `CHANGELOG.md`, re-adds an empty `[Unreleased]` section, commits both on a `release/vX.Y.Z` branch, pushes the branch, and opens a PR via `gh`. **No tag is created yet.** Local `main` is restored to `origin/main` before the script exits so the working tree stays clean while the PR is in review.
+
+### Phase 2 — finalize after merge
+
+Wait for the required checks to pass, then merge the PR. Merge-commit is preferred (preserves the release commit's SHA on `main`); squash also works because GitHub uses the PR title as the squash subject, which matches the pattern the finalize step greps for.
+
+Then:
+
+```bash
+bun scripts/release.ts finalize
+```
+
+This fetches `origin/main`, reads the merged version from `package.json`, finds the release commit by message, creates and pushes the `vX.Y.Z` tag, and deletes the `release/vX.Y.Z` branch. The tag push triggers `docker.yml` and `release.yml`.
+
+### After both phases
+
+1. Wait for `docker.yml` and `release.yml` to finish.
+2. Review the draft release on GitHub, edit notes if needed, publish.
 
 ## Hotfixes (when needed)
 
