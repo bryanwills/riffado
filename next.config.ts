@@ -23,9 +23,23 @@ const nextConfig: NextConfig = {
     // output only includes files reachable through the build graph, so
     // declare the script as an extra traced input or it won't ship in
     // the Docker image. See `src/lib/install-script.ts`.
+    //
+    // `wreq-js` is listed in `serverExternalPackages` above so Turbopack
+    // leaves a runtime `externalImport("wreq-js")` in the output. Under
+    // Next 16 + Turbopack, the file tracer does NOT follow that dynamic
+    // import, so `node_modules/wreq-js` is missing from
+    // `.next/standalone/node_modules` and the server boots into
+    //   `Cannot find package 'wreq-js' from '.next/server/chunks/[turbopack]_runtime.js'`
+    // the moment any Plaud helper loads (only when `WEBSHARE_API_KEY` is
+    // set — direct egress doesn't pull this module in). Pull the whole
+    // package, including its prebuilt `.node` binaries, into the trace
+    // explicitly. The `"/**/*"` route key applies the include to every
+    // route, since the Plaud fetch is reachable from sync, OTP, workspace
+    // token, recording mutations, and the dev probe.
     outputFileTracingIncludes: {
         "/install.sh": ["./scripts/install.sh"],
         "/[version]/install.sh": ["./scripts/install.sh"],
+        "/**/*": ["./node_modules/wreq-js/**/*"],
     },
     images: {
         loader: "custom",
