@@ -173,13 +173,6 @@ export const POST = apiHandler<IdContext>(async (request, context) => {
     // the LLM's input contract; ciphertext lives only in the DB.
     const transcriptText = decryptText(transcription.text);
 
-    // Truncate transcription if too long
-    const maxLength = 8000;
-    const truncatedTranscription =
-        transcriptText.length > maxLength
-            ? `${transcriptText.substring(0, maxLength)}...`
-            : transcriptText;
-
     // Apply AI output language directive (if configured) via the system
     // message rather than the user prompt. This separates concerns: the
     // user prompt carries the JSON-shape contract (English keys), the
@@ -190,9 +183,12 @@ export const POST = apiHandler<IdContext>(async (request, context) => {
         userSettingsRow?.aiOutputLanguage ?? null,
     );
 
+    // Use a replacement function so `$` sequences in the transcript (e.g.
+    // `$1`, `$&`, `$$`) are inserted verbatim instead of being interpreted
+    // as `String.prototype.replace` special patterns.
     const prompt = promptTemplate.replace(
         "{transcription}",
-        truncatedTranscription,
+        () => transcriptText,
     );
 
     const baseSystem =
