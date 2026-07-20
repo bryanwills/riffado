@@ -90,10 +90,23 @@ describe("billing worker tick", () => {
         expect(lapseMock.processExpiredTrials).toHaveBeenCalled();
         expect(deletionMock.processDueAccountDeletions).toHaveBeenCalled();
         expect(remindersMock.processGraceReminders).toHaveBeenCalled();
-        expect(transitionMock.processTransitionEmails).toHaveBeenCalled();
+        expect(transitionMock.processTransitionEmails).toHaveBeenCalledWith({
+            sendStart: false,
+        });
         expect(
             foundingReservationsMock.reconcileExpiredFoundingReservations,
         ).toHaveBeenCalled();
+    });
+
+    it("reconciles expired founding reservations before deriving transition email pricing", async () => {
+        await tick();
+
+        expect(
+            foundingReservationsMock.reconcileExpiredFoundingReservations.mock
+                .invocationCallOrder[0],
+        ).toBeLessThan(
+            transitionMock.processTransitionEmails.mock.invocationCallOrder[0],
+        );
     });
 
     it("a middle phase throwing does not block the later phases either", async () => {
@@ -110,7 +123,9 @@ describe("billing worker tick", () => {
         expect(cycleCloseMock.closeDueCycles).toHaveBeenCalled();
         expect(lapseMock.processExpiredTrials).toHaveBeenCalled();
         expect(remindersMock.processGraceReminders).toHaveBeenCalled();
-        expect(transitionMock.processTransitionEmails).toHaveBeenCalled();
+        expect(transitionMock.processTransitionEmails).toHaveBeenCalledWith({
+            sendStart: false,
+        });
         expect(
             foundingReservationsMock.reconcileExpiredFoundingReservations,
         ).toHaveBeenCalled();

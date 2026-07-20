@@ -1,8 +1,7 @@
 import { Check } from "lucide-react";
 import Link from "next/link";
 import { MetalButton } from "@/components/metal-button";
-import { getFoundingMemberAvailability } from "@/db/queries/billing";
-import { env } from "@/lib/env";
+import type { FoundingMemberAvailabilityRow } from "@/db/queries/billing";
 import {
     billingPriceCatalog,
     type PublicPrice,
@@ -61,6 +60,7 @@ import {
 type Tier = {
     name: string;
     price: string;
+    compareAtPrice?: string;
     priceSuffix: string;
     tagline: string;
     pill: { label: string; tone: "muted" | "primary" } | null;
@@ -79,13 +79,10 @@ function formatCatalogPrice(price: PublicPrice, suffix: string): string {
     return amount ? `${symbol}${amount}${suffix}` : "";
 }
 
-async function buildTiers(): Promise<{
+function buildTiers(availability: FoundingMemberAvailabilityRow): {
     tiers: Tier[];
     headlinePrice: string | null;
-}> {
-    const availability = await getFoundingMemberAvailability(
-        env.BILLING_FOUNDING_MEMBER_CAPACITY,
-    );
+} {
     const catalog = billingPriceCatalog(availability);
     const primaryMonthly =
         availability.remaining > 0
@@ -94,6 +91,15 @@ async function buildTiers(): Promise<{
     const headlinePrice = primaryMonthly
         ? formatCatalogPrice(primaryMonthly, "")
         : null;
+    const comparisonMonthly = primaryMonthly
+        ? (catalog.monthly.standard[primaryMonthly.currency] ??
+          catalog.monthly.standard.usd ??
+          catalog.monthly.standard.eur)
+        : null;
+    const compareAtPrice =
+        availability.remaining > 0 && comparisonMonthly
+            ? formatCatalogPrice(comparisonMonthly, "")
+            : null;
     const foundingMonthlyParts = [
         catalog.monthly.founding.usd,
         catalog.monthly.founding.eur,
@@ -150,6 +156,7 @@ async function buildTiers(): Promise<{
             {
                 name: "Hosted Pro",
                 price: headlinePrice ?? "Unavailable",
+                compareAtPrice: compareAtPrice || undefined,
                 priceSuffix: headlinePrice ? "/ month" : "",
                 tagline: "Hosted, with the rough edges paid for.",
                 pill: { label: "14-day free trial", tone: "primary" },
@@ -171,8 +178,12 @@ async function buildTiers(): Promise<{
     };
 }
 
-export async function Pricing() {
-    const { tiers, headlinePrice } = await buildTiers();
+export function Pricing({
+    availability,
+}: {
+    availability: FoundingMemberAvailabilityRow;
+}) {
+    const { tiers, headlinePrice } = buildTiers(availability);
     return (
         <section id="pricing" className="py-24 md:py-32">
             <div className="container mx-auto px-4">
@@ -242,6 +253,11 @@ function TierCard({ tier }: { tier: Tier }) {
                     <span className="text-4xl md:text-5xl font-semibold tracking-tight tabular-nums leading-none">
                         {tier.price}
                     </span>
+                    {tier.compareAtPrice ? (
+                        <span className="text-xl text-muted-foreground/70 line-through tabular-nums">
+                            {tier.compareAtPrice}
+                        </span>
+                    ) : null}
                     <span className="text-sm text-muted-foreground tabular-nums">
                         {tier.priceSuffix}
                     </span>

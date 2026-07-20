@@ -5,7 +5,7 @@ import {
     AccordionItem,
     AccordionTrigger,
 } from "@/components/ui/accordion";
-import { getFoundingMemberAvailability } from "@/db/queries/billing";
+import type { FoundingMemberAvailabilityRow } from "@/db/queries/billing";
 import { env } from "@/lib/env";
 import {
     billingPriceCatalog,
@@ -69,10 +69,7 @@ function formatCatalogPrice(price: PublicPrice, suffix: string): string {
     return amount ? `${symbol}${amount}${suffix}` : "";
 }
 
-async function hostedCostAnswer(): Promise<string> {
-    const availability = await getFoundingMemberAvailability(
-        env.BILLING_FOUNDING_MEMBER_CAPACITY,
-    );
+function hostedCostAnswer(availability: FoundingMemberAvailabilityRow): string {
     const catalog = billingPriceCatalog(availability);
     const foundingParts = [
         catalog.monthly.founding.usd,
@@ -106,7 +103,7 @@ async function hostedCostAnswer(): Promise<string> {
             ? ` Prefer to pay yearly? Annual billing is available at ${annualParts.join(" or ")}.`
             : "";
 
-    return `${monthlySentence}${annualSentence} Stripe Checkout shows the final total and applicable tax before you pay. You start with a ${env.BILLING_TRIAL_DAYS}-day free trial, no card required, and the full Pro experience: 50 GB encrypted storage, ${INCLUDED_TRANSCRIPTION_HOURS} hours of cloud transcription per month, unlimited devices, priority sync, email support. Off-site encrypted backups are coming soon. If you decide it's not for you, you walk away; if you want to keep it, you add a card. If you want Riffado free, self-host it: same code, your machine, AGPL-3.0, free forever.`;
+    return `${monthlySentence}${annualSentence} Stripe Checkout shows the final total and applicable tax before you pay. You start with a ${env.BILLING_TRIAL_DAYS}-day free trial, no card required, and the full Pro experience: 50 GB encrypted storage, ${INCLUDED_TRANSCRIPTION_HOURS} hours of cloud transcription per month, unlimited devices, background sync, email support. Off-site encrypted backups are coming soon. If you decide it's not for you, you walk away; if you want to keep it, you add a card. If you want Riffado free, self-host it: same code, your machine, AGPL-3.0, free forever.`;
 }
 
 const GROUPS: FaqGroup[] = [
@@ -239,8 +236,12 @@ function faqJsonLd(groups: FaqGroup[]) {
     };
 }
 
-export async function FAQ() {
-    const costAnswer = await hostedCostAnswer();
+export function FAQ({
+    availability,
+}: {
+    availability: FoundingMemberAvailabilityRow;
+}) {
+    const costAnswer = hostedCostAnswer(availability);
     const groups = GROUPS.map((group, groupIndex) =>
         groupIndex === 0
             ? {

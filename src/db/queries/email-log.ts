@@ -28,6 +28,24 @@ export async function claimEmailSend(input: {
     return inserted.length > 0;
 }
 
+/** Check whether a once-only email key is already claimed for a user. */
+export async function hasEmailSend(input: {
+    userId: string;
+    kind: string;
+}): Promise<boolean> {
+    const rows = await db
+        .select({ id: emailLog.id })
+        .from(emailLog)
+        .where(
+            and(
+                eq(emailLog.userId, input.userId),
+                eq(emailLog.kind, input.kind),
+            ),
+        )
+        .limit(1);
+    return rows.length > 0;
+}
+
 /**
  * Undo a `claimEmailSend` claim. Callers use this when the send itself
  * fails after a successful claim (transient SMTP error, render

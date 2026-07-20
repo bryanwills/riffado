@@ -70,8 +70,22 @@ export async function tick(): Promise<void> {
             }
         });
 
+        await runPhase("founding-reservations", async () => {
+            const reservations = await reconcileExpiredFoundingReservations();
+            if (reservations.inspected > 0 || reservations.errors > 0) {
+                console.log(
+                    `[billing-worker] founding-reservations inspected=${reservations.inspected} expired=${reservations.expired} completed=${reservations.completed} errors=${reservations.errors}`,
+                );
+            }
+        });
+
         await runPhase("transition-emails", async () => {
-            const transition = await processTransitionEmails();
+            // Launch notices are sent manually with the resumable operator
+            // script after the paid smoke test. The worker owns only the
+            // time-driven reminder and read-only notices.
+            const transition = await processTransitionEmails({
+                sendStart: false,
+            });
             if (
                 transition.start > 0 ||
                 transition.reminder > 0 ||
@@ -80,15 +94,6 @@ export async function tick(): Promise<void> {
             ) {
                 console.log(
                     `[billing-worker] transition-emails start=${transition.start} reminder=${transition.reminder} ended=${transition.ended} errors=${transition.errors}`,
-                );
-            }
-        });
-
-        await runPhase("founding-reservations", async () => {
-            const reservations = await reconcileExpiredFoundingReservations();
-            if (reservations.inspected > 0 || reservations.errors > 0) {
-                console.log(
-                    `[billing-worker] founding-reservations inspected=${reservations.inspected} expired=${reservations.expired} completed=${reservations.completed} errors=${reservations.errors}`,
                 );
             }
         });
@@ -119,8 +124,8 @@ export async function tick(): Promise<void> {
  *  - Closes due Mynah cycles
  *  - Detects expired trials with no card -> demotes + schedules deletion
  *  - Processes accounts whose grace window has elapsed -> hard delete
- *  - Drives the grandfathered-cohort transition emails (start / reminder
- *    / ended) once the configured launch date has arrived
+ *  - Drives the grandfathered-cohort reminder / ended emails once the
+ *    configured launch date has arrived (launch notices use the operator script)
  *
  * Every sixth tick (~30 minutes) additionally runs subscription
  * reconciliation against Stripe to catch drift from missed webhooks.

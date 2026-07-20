@@ -1,5 +1,6 @@
 import { Button, Heading, Section, Text } from "@react-email/components";
 import { EmailLayout } from "./_layout";
+import { formatEmailPrice } from "./format-price";
 import { emailStyles } from "./styles";
 
 interface Props {
@@ -15,10 +16,9 @@ interface Props {
     selfHostUrl: string;
 }
 
-// DRAFT COPY: review before sending. Sent when the free Pro window has
-// closed and the account is now read-only. No deletion clock for the
-// grandfathered cohort: data stays put indefinitely until they subscribe,
-// export, or self-host.
+// Sent when the free Pro window has closed and the account is now read-only.
+// No deletion clock for the grandfathered cohort: data stays put indefinitely
+// until they subscribe, export, or self-host.
 export function TransitionEndedEmail({
     amountValue,
     amountCurrency,
@@ -42,7 +42,7 @@ export function TransitionEndedEmail({
             <Text style={emailStyles.text}>
                 Nothing will be deleted. Pick this back up whenever you're
                 ready. Subscribe and everything resumes instantly at{" "}
-                {amountValue} {amountCurrency}/month.
+                {formatEmailPrice(amountValue, amountCurrency)}.
             </Text>
             <Section style={emailStyles.buttonSection}>
                 <Button style={emailStyles.button} href={billingUrl}>
