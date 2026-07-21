@@ -11,6 +11,7 @@ const ITEMS = [
     { href: "/admin/transcription", label: "Transcription" },
     { href: "/admin/sync", label: "Sync" },
     { href: "/admin/exports", label: "Exports" },
+    { href: "/admin/email", label: "Email" },
     { href: "/admin/signups", label: "Signups" },
     { href: "/admin/billing", label: "Billing" },
     { href: "/admin/pricing-snapshot", label: "Pricing" },

@@ -19,7 +19,10 @@ const CAMPAIGN_KINDS: readonly CampaignKind[] = [
  * address. Fall back to "marketing" (the most conservative choice --
  * strictest opt-out/unsubscribe handling) rather than propagate junk.
  */
-function normalizeCampaignKind(value: string, slug: string): CampaignKind {
+export function normalizeCampaignKind(
+    value: string,
+    slug: string,
+): CampaignKind {
     if ((CAMPAIGN_KINDS as readonly string[]).includes(value)) {
         return value as CampaignKind;
     }
