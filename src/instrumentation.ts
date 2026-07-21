@@ -54,7 +54,7 @@ export async function register() {
     startBillingWorker();
 
     const { startBackgroundSyncWorker } =
-        require("./lib/hosted/sync/worker") as BackgroundSyncWorkerModule;
+        require("./lib/sync/worker") as BackgroundSyncWorkerModule;
     startBackgroundSyncWorker();
 
     const { startExportWorker } =

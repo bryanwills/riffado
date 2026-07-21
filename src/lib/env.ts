@@ -91,6 +91,58 @@ const baseEnvSchema = z.object({
         .transform((val) => (val ? Number(val) : 10))
         .pipe(z.number().int().positive().max(600)),
 
+    /**
+     * Master switch for the server-side background sync worker (#159).
+     * Default true. Set false to opt out entirely -- e.g. a self-hoster who
+     * wants sync to happen only when they have the app open, or who wants to
+     * control Plaud API call timing themselves (cron hitting `POST
+     * /api/plaud/sync`, per the issue's alternative ask). No effect on the
+     * client-side `useAutoSync` polling, which is unaffected either way.
+     * Rejects anything other than "true"/"false"/unset so a typo (e.g.
+     * "flase") fails loudly instead of silently leaving sync enabled.
+     */
+    BACKGROUND_SYNC_ENABLED: z
+        .string()
+        .optional()
+        .transform((val, ctx) => {
+            if (val === undefined || val === "") return true;
+            if (val === "true") return true;
+            if (val === "false") return false;
+
+            ctx.addIssue({
+                code: "custom",
+                message:
+                    'BACKGROUND_SYNC_ENABLED must be either "true" or "false"',
+            });
+            return z.NEVER;
+        }),
+
+    /**
+     * Tick interval (ms) for the server-side background sync worker, which
+     * polls Plaud and processes new recordings independently of any open
+     * browser tab (#159). Default 5 min, range 1..60 min. Runs for all users
+     * on self-host; hosted restricts eligibility to `hosted_pro`. Note the
+     * worker also skips any user synced in the last 4 minutes (regardless of
+     * this interval), so setting this below 4 min doesn't sync any given
+     * user more often -- it only makes the worker tick (and query the
+     * database) more frequently for no benefit.
+     */
+    BACKGROUND_SYNC_INTERVAL_MS: z
+        .string()
+        .regex(
+            /^\d+$/,
+            "BACKGROUND_SYNC_INTERVAL_MS must be a positive integer",
+        )
+        .optional()
+        .transform((val) => (val ? Number(val) : 5 * 60 * 1000))
+        .pipe(
+            z
+                .number()
+                .int()
+                .min(60_000)
+                .max(60 * 60_000),
+        ),
+
     /** Compress OpenAI-style transcription inputs above this byte threshold. */
     WHISPER_MAX_BYTES: z
         .string()
@@ -679,6 +731,9 @@ function validateEnv(): Env {
             PLAUD_PROXY_SCOPE: process.env.PLAUD_PROXY_SCOPE,
             PLAUD_SYNC_RATE_LIMIT_PER_MINUTE:
                 process.env.PLAUD_SYNC_RATE_LIMIT_PER_MINUTE,
+            BACKGROUND_SYNC_ENABLED: process.env.BACKGROUND_SYNC_ENABLED,
+            BACKGROUND_SYNC_INTERVAL_MS:
+                process.env.BACKGROUND_SYNC_INTERVAL_MS,
             WHISPER_MAX_BYTES: process.env.WHISPER_MAX_BYTES,
             WHISPER_COMPRESS_BITRATE_KBPS:
                 process.env.WHISPER_COMPRESS_BITRATE_KBPS,
