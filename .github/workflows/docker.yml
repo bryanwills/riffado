@@ -12,8 +12,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  docker:
-    runs-on: ubuntu-latest
+  # Builds each platform on its own native runner, in parallel, instead of
+  # one job emulating arm64 under QEMU on an amd64 runner. Each job pushes
+  # its own arch-suffixed tags (e.g. `0.6.3-amd64`) the moment it finishes,
+  # so hosted prod (amd64-only) can deploy right away without waiting on
+  # the slower arm64 build or the merged multi-arch manifest below.
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+
+    runs-on: ${{ matrix.runner }}
 
     permissions:
       contents: read
@@ -38,7 +54,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ghcr.io/${{ github.repository }}
-          # Tag semantics:
+          # Canonical tag semantics (applied to the merged multi-arch
+          # manifest by the `merge` job below):
           #   - `latest`       → newest stable release (v* tag push)
           #   - `X.Y.Z` / `X.Y` → specific release versions
           #   - `dev`          → rolling build from `main` (unstable, opt-in)
@@ -49,16 +66,27 @@ jobs:
             type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
             type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
 
-      - name: Build and push Docker image
+      - name: Compute arch-suffixed tags
+        id: arch_tags
+        run: |
+          {
+            echo 'tags<<EOF'
+            while IFS= read -r tag; do
+              [ -n "$tag" ] && echo "${tag}-${{ matrix.arch }}"
+            done <<< "${{ steps.meta.outputs.tags }}"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ matrix.platform }}
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ steps.arch_tags.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
           # PostHog source-map upload. Empty on forks / other repos (no
           # access to these secrets) -- the guarded Dockerfile step and
           # next.config.ts's productionBrowserSourceMaps gate both no-op
@@ -66,3 +94,58 @@ jobs:
           build-args: |
             POSTHOG_CLI_API_KEY=${{ secrets.POSTHOG_CLI_API_KEY }}
             POSTHOG_CLI_PROJECT_ID=${{ secrets.POSTHOG_CLI_PROJECT_ID }}
+
+  # Combines the amd64 + arm64 images built above into a single
+  # multi-arch manifest list under the canonical tags (`latest`,
+  # `X.Y.Z`, `X.Y`, `dev`). This is what self-host `docker-compose.yml`
+  # pulls, and it necessarily waits on both platforms -- the
+  # arch-suffixed tags above are the fast path for anyone who only
+  # needs one architecture.
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable=${{ startsWith(github.ref, 'refs/tags/v') }}
+            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Create and push multi-arch manifest
+        run: |
+          # Any one canonical tag works as the source reference -- they
+          # all point at the same per-arch build. Use the first.
+          source_tag="$(head -n1 <<< "${{ steps.meta.outputs.tags }}")"
+
+          dest_flags=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && dest_flags+=(-t "$tag")
+          done <<< "${{ steps.meta.outputs.tags }}"
+
+          docker buildx imagetools create "${dest_flags[@]}" \
+            "${source_tag}-amd64" \
+            "${source_tag}-arm64"
+
+      - name: Inspect image
+        run: |
+          docker buildx imagetools inspect ghcr.io/${{ github.repository }}:${{ steps.meta.outputs.version }}
