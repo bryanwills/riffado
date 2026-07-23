@@ -167,7 +167,7 @@ export async function mirrorStripeSubscription(
         console.warn(
             `[billing-mirror] subscription ${n.id} conflicts with locally-active ${error.conflictingSubscriptionId} for user ${userId}; re-mirroring the stale one before retrying`,
         );
-        await mirrorSubscriptionById(error.conflictingSubscriptionId);
+        await resyncSubscriptionRow(error.conflictingSubscriptionId);
         await upsertSubscription(subscriptionRow);
     }
 
@@ -257,6 +257,59 @@ function isTerminalSubscriptionStatus(status: string): boolean {
         status === "unpaid" ||
         status === "incomplete_expired"
     );
+}
+
+/**
+ * Refresh only the `subscriptions` row for `subscriptionId` from Stripe --
+ * no plan mutation, no lapse/founding/email side effects. Used solely to
+ * resolve `SubscriptionUserConflictError`: the conflicting row just needs
+ * its stale status corrected so the one-live-subscription-per-user index
+ * frees up before the real write is retried.
+ *
+ * Deliberately does not call `mirrorStripeSubscription`/`mirrorSubscriptionById`
+ * here: if the conflicting subscription has genuinely gone terminal, running
+ * the full mirror would fire lapse side effects (release the founding
+ * reservation, forfeit founding status, schedule account deletion, send the
+ * grace-started email) for a subscription that's about to be immediately
+ * superseded by the new active one this function is unblocking. Those side
+ * effects are not undone by mirroring the new subscription afterward --
+ * `clearAccountDeletion` only clears the deletion timer, it doesn't unsend
+ * the email or restore founding status. The conflicting subscription's own
+ * webhook (or the next reconcile pass) still runs the full mirror -- with
+ * side effects -- at the time that transition is actually confirmed.
+ */
+async function resyncSubscriptionRow(subscriptionId: string): Promise<void> {
+    const stripe = getStripe();
+    const sub = await stripe.subscriptions.retrieve(subscriptionId);
+    const n = normalize(sub);
+    const userId =
+        n.userId ??
+        (await getBillingCustomerByStripeId(n.stripeCustomerId))?.userId ??
+        null;
+    if (!userId) {
+        console.warn(
+            `[billing-mirror] conflicting subscription ${n.id} has no resolvable user (customer ${n.stripeCustomerId}); skipping resync`,
+        );
+        return;
+    }
+    const billingCountry = await resolveBillingCountry(n.stripeCustomerId);
+    await upsertSubscription({
+        id: n.id,
+        userId,
+        stripeCustomerId: n.stripeCustomerId,
+        stripePriceId: n.stripePriceId,
+        status: n.status,
+        amountValue: n.amountValue,
+        amountCurrency: n.amountCurrency,
+        interval: n.interval,
+        description: n.description,
+        billingCountry,
+        startDate: n.startDate,
+        nextPaymentAt: n.nextPaymentAt,
+        canceledAt: n.canceledAt,
+        withdrawalWaiverAcceptedAt: n.withdrawalWaiverAcceptedAt,
+        metadata: sub,
+    });
 }
 
 /** Webhook/reconcile entry: fetch the subscription by id, then mirror. */
