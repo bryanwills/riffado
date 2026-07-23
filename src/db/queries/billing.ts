@@ -75,6 +75,37 @@ export interface SubscriptionUpsertInput {
     metadata: unknown;
 }
 
+/**
+ * Thrown by `upsertSubscription` when the row being written would violate
+ * `subscriptions_user_id_active_unique` -- i.e. the user already has a
+ * *different* subscription id in a live status. This happens when Stripe
+ * webhooks for two subscriptions on the same customer arrive out of order
+ * (the old one hasn't been mirrored as canceled/superseded yet). Callers
+ * should re-mirror `conflictingSubscriptionId` from Stripe (the source of
+ * truth) and retry.
+ */
+export class SubscriptionUserConflictError extends Error {
+    constructor(
+        readonly userId: string,
+        readonly conflictingSubscriptionId: string,
+    ) {
+        super(
+            `User ${userId} already has a live subscription (${conflictingSubscriptionId}) distinct from the one being mirrored`,
+        );
+        this.name = "SubscriptionUserConflictError";
+    }
+}
+
+function isUniqueViolationOn(error: unknown, constraintName: string): boolean {
+    return (
+        typeof error === "object" &&
+        error !== null &&
+        (error as { code?: string }).code === "23505" &&
+        (error as { constraint_name?: string }).constraint_name ===
+            constraintName
+    );
+}
+
 export async function upsertSubscription(
     input: SubscriptionUpsertInput,
 ): Promise<void> {
@@ -108,10 +139,20 @@ export async function upsertSubscription(
           }
         : { ...baseValues, updatedAt: new Date() };
 
-    await db.insert(subscriptions).values(insertValues).onConflictDoUpdate({
-        target: subscriptions.id,
-        set: updateValues,
-    });
+    try {
+        await db.insert(subscriptions).values(insertValues).onConflictDoUpdate({
+            target: subscriptions.id,
+            set: updateValues,
+        });
+    } catch (error) {
+        if (isUniqueViolationOn(error, "subscriptions_user_id_active_unique")) {
+            const other = await getSubscriptionByUserId(input.userId);
+            if (other && other.id !== input.id) {
+                throw new SubscriptionUserConflictError(input.userId, other.id);
+            }
+        }
+        throw error;
+    }
 }
 
 export interface SubscriptionRow {
