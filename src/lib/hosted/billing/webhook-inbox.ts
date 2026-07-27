@@ -2,6 +2,7 @@ import type Stripe from "stripe";
 import {
     claimDueStripeWebhookEvents,
     completeStripeWebhookEvent,
+    completeStripeWebhookEventUnderLock,
     failStripeWebhookEvent,
     renewStripeWebhookEventClaim,
     withStripeWebhookEventLock,
@@ -80,13 +81,13 @@ async function processEvent(row: {
 
         try {
             await handleStripeWebhook(eventFromInboxRow(row));
-            if (claimLost || !(await renew())) {
-                return { completed: 0, retried: 0, failed: 0 };
-            }
-            const completed = await completeStripeWebhookEvent({
-                eventId: row.eventId,
-                claimToken: row.claimToken,
-            });
+            const completed =
+                claimLost || !(await renew())
+                    ? await completeStripeWebhookEventUnderLock(row.eventId)
+                    : await completeStripeWebhookEvent({
+                          eventId: row.eventId,
+                          claimToken: row.claimToken,
+                      });
             return { completed: completed ? 1 : 0, retried: 0, failed: 0 };
         } catch (error) {
             if (claimLost) return { completed: 0, retried: 0, failed: 0 };

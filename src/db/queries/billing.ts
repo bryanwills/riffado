@@ -1153,6 +1153,30 @@ export async function renewStripeWebhookEventClaim(input: {
     return rows.length > 0;
 }
 
+/** Completes an event while its event-scoped advisory lock is held. */
+export async function completeStripeWebhookEventUnderLock(
+    eventId: string,
+): Promise<boolean> {
+    const rows = await db
+        .update(stripeWebhookEvents)
+        .set({
+            status: "completed",
+            completedAt: new Date(),
+            claimToken: null,
+            startedAt: null,
+            lastError: null,
+            updatedAt: new Date(),
+        })
+        .where(
+            and(
+                eq(stripeWebhookEvents.eventId, eventId),
+                eq(stripeWebhookEvents.status, "processing"),
+            ),
+        )
+        .returning({ eventId: stripeWebhookEvents.eventId });
+    return rows.length > 0;
+}
+
 export async function completeStripeWebhookEvent(input: {
     eventId: string;
     claimToken: string;

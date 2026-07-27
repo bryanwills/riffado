@@ -4,6 +4,7 @@ const { queryMock, webhookMock } = vi.hoisted(() => ({
     queryMock: {
         claimDueStripeWebhookEvents: vi.fn(),
         completeStripeWebhookEvent: vi.fn(),
+        completeStripeWebhookEventUnderLock: vi.fn(),
         failStripeWebhookEvent: vi.fn(),
         renewStripeWebhookEventClaim: vi.fn(),
         withStripeWebhookEventLock: vi.fn(),
@@ -33,6 +34,7 @@ describe("Stripe webhook inbox", () => {
         vi.clearAllMocks();
         queryMock.claimDueStripeWebhookEvents.mockResolvedValue([inboxEvent]);
         queryMock.completeStripeWebhookEvent.mockResolvedValue(true);
+        queryMock.completeStripeWebhookEventUnderLock.mockResolvedValue(true);
         queryMock.renewStripeWebhookEventClaim.mockResolvedValue(true);
         queryMock.withStripeWebhookEventLock.mockImplementation(
             (_eventId: string, run: () => Promise<unknown>) => run(),
@@ -62,6 +64,25 @@ describe("Stripe webhook inbox", () => {
             eventId: "evt_1",
             claimToken: "claim_1",
         });
+        expect(result).toEqual({
+            claimed: 1,
+            completed: 1,
+            retried: 0,
+            failed: 0,
+        });
+    });
+
+    it("completes under the advisory lock when a replacement claim arrives during handling", async () => {
+        queryMock.renewStripeWebhookEventClaim
+            .mockResolvedValueOnce(true)
+            .mockResolvedValueOnce(false);
+
+        const result = await processStripeWebhookInbox();
+
+        expect(
+            queryMock.completeStripeWebhookEventUnderLock,
+        ).toHaveBeenCalledWith("evt_1");
+        expect(queryMock.completeStripeWebhookEvent).not.toHaveBeenCalled();
         expect(result).toEqual({
             claimed: 1,
             completed: 1,
