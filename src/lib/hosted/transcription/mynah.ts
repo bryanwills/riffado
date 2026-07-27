@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { env } from "@/lib/env";
 import {
     commitMynahReservation,
@@ -77,11 +78,21 @@ interface PostTranscriptionRequestInput {
  * a status-only `Error` -- the upstream body can contain internal Mynah
  * diagnostics, so the detail is logged server-side only, not propagated
  * to the client.
+ *
+ * A 502/503/504/524 is ambiguous: the gateway timing out doesn't tell us
+ * whether Mynah ever started (or finished) the work, so a naive retry can
+ * duplicate billed transcription work server-side while we only keep one
+ * local result/reservation. Every attempt for one logical request
+ * (initial + retries) carries the same `idempotency-key` header so Mynah
+ * can de-duplicate on its side; this is a client-side mitigation only --
+ * it's a no-op unless Mynah's API honors the header, which this repo
+ * can't verify (Mynah runs as a separate service, see AGENTS.md).
  */
 async function postTranscriptionRequest(
     input: PostTranscriptionRequestInput,
 ): Promise<{ text?: string; language?: string | null }> {
     const { mynahBaseUrl, mynahServiceToken, userId, url, language } = input;
+    const idempotencyKey = randomUUID();
     let attempt = 0;
     for (;;) {
         const res = await fetch(`${mynahBaseUrl}/v1/audio/transcriptions`, {
@@ -90,6 +101,7 @@ async function postTranscriptionRequest(
                 authorization: `Bearer ${mynahServiceToken}`,
                 "content-type": "application/json",
                 "x-riffado-user-id": userId,
+                "idempotency-key": idempotencyKey,
             },
             body: JSON.stringify({
                 url,
