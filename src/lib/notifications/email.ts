@@ -156,20 +156,6 @@ async function sendClaimedEmail(
     }
 }
 
-async function sendRequiredClaimedEmail(
-    claim: { userId: string; kind: string },
-    build: () => Promise<EmailOptions>,
-): Promise<void> {
-    const claimed = await claimEmailSend(claim);
-    if (!claimed) return;
-    try {
-        await sendEmailWithError(await build());
-    } catch (error) {
-        await releaseEmailSend(claim);
-        throw error;
-    }
-}
-
 export async function sendNewRecordingEmail(
     email: string,
     count: number,
@@ -294,8 +280,9 @@ export async function sendWelcomeHostedProEmail(input: {
 }
 
 /**
- * Payment-failed nudge. Per-failure, not once-only: kind is namespaced
- * with the payment id so each failed payment can send exactly once.
+ * Payment-failed nudge. The webhook inbox owns delivery retries, so this
+ * deliberately does not pre-claim an email-log row that a crashed worker
+ * could strand before SMTP accepts the message.
  */
 export async function sendPaymentFailedEmail(input: {
     userId: string;
@@ -305,23 +292,18 @@ export async function sendPaymentFailedEmail(input: {
     nextRetryAt: Date | null;
     accessUntil: Date | null;
 }): Promise<void> {
-    await sendRequiredClaimedEmail(
-        { userId: input.userId, kind: `payment_failed:${input.paymentId}` },
-        async () => {
-            const html = await renderEmailHtml(
-                React.createElement(PaymentFailedEmail, {
-                    billingUrl: input.billingUrl,
-                    nextRetryAt: input.nextRetryAt,
-                    accessUntil: input.accessUntil,
-                }),
-            );
-            return {
-                to: input.email,
-                subject: "Riffado: payment failed",
-                html,
-            };
-        },
+    const html = await renderEmailHtml(
+        React.createElement(PaymentFailedEmail, {
+            billingUrl: input.billingUrl,
+            nextRetryAt: input.nextRetryAt,
+            accessUntil: input.accessUntil,
+        }),
     );
+    await sendEmailWithError({
+        to: input.email,
+        subject: "Riffado: payment failed",
+        html,
+    });
 }
 
 /**

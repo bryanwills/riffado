@@ -4,6 +4,7 @@ import {
     completeStripeWebhookEvent,
     failStripeWebhookEvent,
     renewStripeWebhookEventClaim,
+    withStripeWebhookEventLock,
 } from "@/db/queries/billing";
 import { captureServerException } from "@/lib/posthog-server";
 import { handleStripeWebhook } from "./webhook";
@@ -45,79 +46,82 @@ async function processEvent(row: {
     attempts: number;
     claimToken: string;
 }): Promise<{ completed: number; retried: number; failed: number }> {
-    let renewing = false;
-    let claimLost = false;
-    const renew = async (): Promise<boolean> => {
-        if (renewing) return !claimLost;
-        renewing = true;
+    return withStripeWebhookEventLock(row.eventId, async () => {
+        let renewing = false;
+        let claimLost = false;
+        const renew = async (): Promise<boolean> => {
+            if (renewing) return !claimLost;
+            renewing = true;
+            try {
+                const renewed = await renewStripeWebhookEventClaim({
+                    eventId: row.eventId,
+                    claimToken: row.claimToken,
+                    processingLeaseMs: PROCESSING_LEASE_MS,
+                });
+                claimLost = !renewed;
+                return renewed;
+            } catch (error) {
+                claimLost = true;
+                console.error(
+                    `[stripe-webhook-inbox] failed to renew claim for ${row.eventId}:`,
+                    error,
+                );
+                return false;
+            } finally {
+                renewing = false;
+            }
+        };
+
+        if (!(await renew())) return { completed: 0, retried: 0, failed: 0 };
+        const renewal = setInterval(() => {
+            void renew();
+        }, CLAIM_RENEWAL_MS);
+        renewal.unref?.();
+
         try {
-            const renewed = await renewStripeWebhookEventClaim({
+            await handleStripeWebhook(eventFromInboxRow(row));
+            if (claimLost || !(await renew())) {
+                return { completed: 0, retried: 0, failed: 0 };
+            }
+            const completed = await completeStripeWebhookEvent({
                 eventId: row.eventId,
                 claimToken: row.claimToken,
-                processingLeaseMs: PROCESSING_LEASE_MS,
             });
-            claimLost = !renewed;
-            return renewed;
+            return { completed: completed ? 1 : 0, retried: 0, failed: 0 };
         } catch (error) {
-            claimLost = true;
-            console.error(
-                `[stripe-webhook-inbox] failed to renew claim for ${row.eventId}:`,
-                error,
-            );
-            return false;
-        } finally {
-            renewing = false;
-        }
-    };
-
-    if (!(await renew())) return { completed: 0, retried: 0, failed: 0 };
-    const renewal = setInterval(() => {
-        void renew();
-    }, CLAIM_RENEWAL_MS);
-    renewal.unref?.();
-
-    try {
-        await handleStripeWebhook(eventFromInboxRow(row));
-        if (claimLost || !(await renew())) {
-            return { completed: 0, retried: 0, failed: 0 };
-        }
-        const completed = await completeStripeWebhookEvent({
-            eventId: row.eventId,
-            claimToken: row.claimToken,
-        });
-        return { completed: completed ? 1 : 0, retried: 0, failed: 0 };
-    } catch (error) {
-        if (claimLost) return { completed: 0, retried: 0, failed: 0 };
-        const message = error instanceof Error ? error.message : String(error);
-        const outcome = await failStripeWebhookEvent({
-            eventId: row.eventId,
-            claimToken: row.claimToken,
-            errorMessage: message,
-            maxAttempts: MAX_ATTEMPTS,
-            retryAt: retryAtForAttempt(row.attempts + 1),
-        });
-        if (!outcome) return { completed: 0, retried: 0, failed: 0 };
-        if (outcome.status === "failed") {
-            console.error(
-                `[stripe-webhook-inbox] event ${row.eventId} failed permanently after ${outcome.attempts} attempt(s):`,
-                error,
-            );
-            captureServerException(error, {
-                source: "worker:billing-webhook-inbox",
+            if (claimLost) return { completed: 0, retried: 0, failed: 0 };
+            const message =
+                error instanceof Error ? error.message : String(error);
+            const outcome = await failStripeWebhookEvent({
                 eventId: row.eventId,
-                eventType: row.type,
-                attempts: outcome.attempts,
+                claimToken: row.claimToken,
+                errorMessage: message,
+                maxAttempts: MAX_ATTEMPTS,
+                retryAt: retryAtForAttempt(row.attempts + 1),
             });
-            return { completed: 0, retried: 0, failed: 1 };
+            if (!outcome) return { completed: 0, retried: 0, failed: 0 };
+            if (outcome.status === "failed") {
+                console.error(
+                    `[stripe-webhook-inbox] event ${row.eventId} failed permanently after ${outcome.attempts} attempt(s):`,
+                    error,
+                );
+                captureServerException(error, {
+                    source: "worker:billing-webhook-inbox",
+                    eventId: row.eventId,
+                    eventType: row.type,
+                    attempts: outcome.attempts,
+                });
+                return { completed: 0, retried: 0, failed: 1 };
+            }
+            console.warn(
+                `[stripe-webhook-inbox] event ${row.eventId} failed attempt ${outcome.attempts}/${MAX_ATTEMPTS}; requeued`,
+                error,
+            );
+            return { completed: 0, retried: 1, failed: 0 };
+        } finally {
+            clearInterval(renewal);
         }
-        console.warn(
-            `[stripe-webhook-inbox] event ${row.eventId} failed attempt ${outcome.attempts}/${MAX_ATTEMPTS}; requeued`,
-            error,
-        );
-        return { completed: 0, retried: 1, failed: 0 };
-    } finally {
-        clearInterval(renewal);
-    }
+    });
 }
 
 export interface StripeWebhookInboxResult {

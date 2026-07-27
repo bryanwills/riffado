@@ -6,6 +6,7 @@ const { queryMock, webhookMock } = vi.hoisted(() => ({
         completeStripeWebhookEvent: vi.fn(),
         failStripeWebhookEvent: vi.fn(),
         renewStripeWebhookEventClaim: vi.fn(),
+        withStripeWebhookEventLock: vi.fn(),
     },
     webhookMock: { handleStripeWebhook: vi.fn() },
 }));
@@ -33,6 +34,9 @@ describe("Stripe webhook inbox", () => {
         queryMock.claimDueStripeWebhookEvents.mockResolvedValue([inboxEvent]);
         queryMock.completeStripeWebhookEvent.mockResolvedValue(true);
         queryMock.renewStripeWebhookEventClaim.mockResolvedValue(true);
+        queryMock.withStripeWebhookEventLock.mockImplementation(
+            (_eventId: string, run: () => Promise<unknown>) => run(),
+        );
     });
 
     it("completes a successfully dispatched event", async () => {
@@ -44,6 +48,10 @@ describe("Stripe webhook inbox", () => {
                 type: "customer.subscription.updated",
                 data: { object: { id: "sub_1" } },
             }),
+        );
+        expect(queryMock.withStripeWebhookEventLock).toHaveBeenCalledWith(
+            "evt_1",
+            expect.any(Function),
         );
         expect(queryMock.renewStripeWebhookEventClaim).toHaveBeenCalledWith({
             eventId: "evt_1",

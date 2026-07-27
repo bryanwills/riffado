@@ -1087,6 +1087,19 @@ export async function claimDueStripeWebhookEvents(input: {
     }));
 }
 
+/** Serializes event side effects across workers for one Stripe event id. */
+export async function withStripeWebhookEventLock<T>(
+    eventId: string,
+    run: () => Promise<T>,
+): Promise<T> {
+    return db.transaction(async (tx) => {
+        await tx.execute(
+            sql`select pg_advisory_xact_lock(hashtextextended(${eventId}, 0))`,
+        );
+        return run();
+    });
+}
+
 /** Extends a live claim so long-running handlers are not reclaimed mid-flight. */
 export async function renewStripeWebhookEventClaim(input: {
     eventId: string;
