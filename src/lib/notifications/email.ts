@@ -156,6 +156,20 @@ async function sendClaimedEmail(
     }
 }
 
+async function sendRequiredClaimedEmail(
+    claim: { userId: string; kind: string },
+    build: () => Promise<EmailOptions>,
+): Promise<void> {
+    const claimed = await claimEmailSend(claim);
+    if (!claimed) return;
+    try {
+        await sendEmailWithError(await build());
+    } catch (error) {
+        await releaseEmailSend(claim);
+        throw error;
+    }
+}
+
 export async function sendNewRecordingEmail(
     email: string,
     count: number,
@@ -290,8 +304,8 @@ export async function sendPaymentFailedEmail(input: {
     billingUrl: string;
     nextRetryAt: Date | null;
     accessUntil: Date | null;
-}): Promise<boolean> {
-    return sendClaimedEmail(
+}): Promise<void> {
+    await sendRequiredClaimedEmail(
         { userId: input.userId, kind: `payment_failed:${input.paymentId}` },
         async () => {
             const html = await renderEmailHtml(

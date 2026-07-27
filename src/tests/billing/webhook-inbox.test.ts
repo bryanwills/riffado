@@ -5,6 +5,7 @@ const { queryMock, webhookMock } = vi.hoisted(() => ({
         claimDueStripeWebhookEvents: vi.fn(),
         completeStripeWebhookEvent: vi.fn(),
         failStripeWebhookEvent: vi.fn(),
+        renewStripeWebhookEventClaim: vi.fn(),
     },
     webhookMock: { handleStripeWebhook: vi.fn() },
 }));
@@ -31,6 +32,7 @@ describe("Stripe webhook inbox", () => {
         vi.clearAllMocks();
         queryMock.claimDueStripeWebhookEvents.mockResolvedValue([inboxEvent]);
         queryMock.completeStripeWebhookEvent.mockResolvedValue(true);
+        queryMock.renewStripeWebhookEventClaim.mockResolvedValue(true);
     });
 
     it("completes a successfully dispatched event", async () => {
@@ -43,6 +45,11 @@ describe("Stripe webhook inbox", () => {
                 data: { object: { id: "sub_1" } },
             }),
         );
+        expect(queryMock.renewStripeWebhookEventClaim).toHaveBeenCalledWith({
+            eventId: "evt_1",
+            claimToken: "claim_1",
+            processingLeaseMs: 15 * 60 * 1000,
+        });
         expect(queryMock.completeStripeWebhookEvent).toHaveBeenCalledWith({
             eventId: "evt_1",
             claimToken: "claim_1",
@@ -50,6 +57,21 @@ describe("Stripe webhook inbox", () => {
         expect(result).toEqual({
             claimed: 1,
             completed: 1,
+            retried: 0,
+            failed: 0,
+        });
+    });
+
+    it("does not dispatch an event after its claim is lost", async () => {
+        queryMock.renewStripeWebhookEventClaim.mockResolvedValue(false);
+
+        const result = await processStripeWebhookInbox();
+
+        expect(webhookMock.handleStripeWebhook).not.toHaveBeenCalled();
+        expect(queryMock.completeStripeWebhookEvent).not.toHaveBeenCalled();
+        expect(result).toEqual({
+            claimed: 1,
+            completed: 0,
             retried: 0,
             failed: 0,
         });

@@ -3,6 +3,7 @@ import {
     claimDueStripeWebhookEvents,
     completeStripeWebhookEvent,
     failStripeWebhookEvent,
+    renewStripeWebhookEventClaim,
 } from "@/db/queries/billing";
 import { captureServerException } from "@/lib/posthog-server";
 import { handleStripeWebhook } from "./webhook";
@@ -10,6 +11,7 @@ import { handleStripeWebhook } from "./webhook";
 const MAX_EVENTS_PER_TICK = 20;
 const MAX_ATTEMPTS = 5;
 const PROCESSING_LEASE_MS = 15 * 60 * 1000;
+const CLAIM_RENEWAL_MS = PROCESSING_LEASE_MS / 3;
 const RETRY_BASE_MS = 60 * 1000;
 const RETRY_MAX_MS = 60 * 60 * 1000;
 
@@ -43,14 +45,49 @@ async function processEvent(row: {
     attempts: number;
     claimToken: string;
 }): Promise<{ completed: number; retried: number; failed: number }> {
+    let renewing = false;
+    let claimLost = false;
+    const renew = async (): Promise<boolean> => {
+        if (renewing) return !claimLost;
+        renewing = true;
+        try {
+            const renewed = await renewStripeWebhookEventClaim({
+                eventId: row.eventId,
+                claimToken: row.claimToken,
+                processingLeaseMs: PROCESSING_LEASE_MS,
+            });
+            claimLost = !renewed;
+            return renewed;
+        } catch (error) {
+            claimLost = true;
+            console.error(
+                `[stripe-webhook-inbox] failed to renew claim for ${row.eventId}:`,
+                error,
+            );
+            return false;
+        } finally {
+            renewing = false;
+        }
+    };
+
+    if (!(await renew())) return { completed: 0, retried: 0, failed: 0 };
+    const renewal = setInterval(() => {
+        void renew();
+    }, CLAIM_RENEWAL_MS);
+    renewal.unref?.();
+
     try {
         await handleStripeWebhook(eventFromInboxRow(row));
+        if (claimLost || !(await renew())) {
+            return { completed: 0, retried: 0, failed: 0 };
+        }
         const completed = await completeStripeWebhookEvent({
             eventId: row.eventId,
             claimToken: row.claimToken,
         });
         return { completed: completed ? 1 : 0, retried: 0, failed: 0 };
     } catch (error) {
+        if (claimLost) return { completed: 0, retried: 0, failed: 0 };
         const message = error instanceof Error ? error.message : String(error);
         const outcome = await failStripeWebhookEvent({
             eventId: row.eventId,
@@ -78,6 +115,8 @@ async function processEvent(row: {
             error,
         );
         return { completed: 0, retried: 1, failed: 0 };
+    } finally {
+        clearInterval(renewal);
     }
 }
 

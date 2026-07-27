@@ -1087,6 +1087,30 @@ export async function claimDueStripeWebhookEvents(input: {
     }));
 }
 
+/** Extends a live claim so long-running handlers are not reclaimed mid-flight. */
+export async function renewStripeWebhookEventClaim(input: {
+    eventId: string;
+    claimToken: string;
+    processingLeaseMs: number;
+}): Promise<boolean> {
+    const now = new Date();
+    const rows = await db
+        .update(stripeWebhookEvents)
+        .set({
+            nextAttemptAt: new Date(now.getTime() + input.processingLeaseMs),
+            updatedAt: now,
+        })
+        .where(
+            and(
+                eq(stripeWebhookEvents.eventId, input.eventId),
+                eq(stripeWebhookEvents.status, "processing"),
+                eq(stripeWebhookEvents.claimToken, input.claimToken),
+            ),
+        )
+        .returning({ eventId: stripeWebhookEvents.eventId });
+    return rows.length > 0;
+}
+
 export async function completeStripeWebhookEvent(input: {
     eventId: string;
     claimToken: string;

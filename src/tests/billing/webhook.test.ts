@@ -138,6 +138,42 @@ describe("handleStripeWebhook", () => {
         );
     });
 
+    it("fails the event when payment-failed email delivery fails", async () => {
+        stripeMock.getStripe.mockReturnValue({
+            subscriptions: {
+                retrieve: vi.fn().mockResolvedValue({
+                    id: "sub_pf_error",
+                    metadata: { userId: "u1" },
+                    items: { data: [{ current_period_end: 1_900_000_000 }] },
+                }),
+            },
+        });
+        dbMock.select.mockReturnValue({
+            from: vi.fn().mockReturnValue({
+                where: vi.fn().mockReturnValue({
+                    limit: vi
+                        .fn()
+                        .mockResolvedValue([{ email: "u1@example.com" }]),
+                }),
+            }),
+        });
+        emailMock.sendPaymentFailedEmail.mockRejectedValue(
+            new Error("SMTP unavailable"),
+        );
+
+        await expect(
+            handleStripeWebhook(
+                event("invoice.payment_failed", {
+                    id: "in_pf_error",
+                    next_payment_attempt: 1_800_000_000,
+                    parent: {
+                        subscription_details: { subscription: "sub_pf_error" },
+                    },
+                }),
+            ),
+        ).rejects.toThrow("SMTP unavailable");
+    });
+
     it("resolves userId via the billing-customer mapping when metadata.userId is missing", async () => {
         stripeMock.getStripe.mockReturnValue({
             subscriptions: {
