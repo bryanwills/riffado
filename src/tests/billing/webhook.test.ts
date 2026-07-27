@@ -4,7 +4,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { queriesMock, mirrorMock, stripeMock, emailMock, dbMock } = vi.hoisted(
     () => ({
         queriesMock: {
-            claimWebhookDelivery: vi.fn(),
             expireFoundingMemberReservationByCheckoutSession: vi.fn(),
             getBillingCustomerByStripeId: vi.fn().mockResolvedValue(null),
         },
@@ -44,15 +43,6 @@ function event(type: string, object: unknown): Stripe.Event {
 describe("handleStripeWebhook", () => {
     beforeEach(() => {
         vi.clearAllMocks();
-        queriesMock.claimWebhookDelivery.mockResolvedValue({ eventId: "x" });
-    });
-
-    it("skips processing on a duplicate delivery", async () => {
-        queriesMock.claimWebhookDelivery.mockResolvedValue(null);
-        await handleStripeWebhook(
-            event("customer.subscription.updated", { id: "sub_1" }),
-        );
-        expect(mirrorMock.mirrorSubscriptionById).not.toHaveBeenCalled();
     });
 
     it("mirrors a completed checkout session", async () => {

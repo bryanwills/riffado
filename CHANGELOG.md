@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Migration `0036_wide_raider` upgrades `stripe_webhook_events` to a durable Stripe event inbox. Inert on self-host unless hosted billing is configured.
+
 ## [0.6.4] - 2026-07-24
 
 ### Fixed
