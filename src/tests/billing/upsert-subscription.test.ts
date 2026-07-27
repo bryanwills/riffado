@@ -14,12 +14,18 @@
  *     and retry.
  *   - If no conflicting row is found, the race already resolved itself
  *     between the failed insert and this lookup (a concurrent webhook
- *     cleared/replaced the blocking row) -- retry the upsert once instead
- *     of re-throwing the raw postgres driver error, which embeds the full
- *     parameterized SQL statement (Stripe customer id, price id, amount)
- *     and would otherwise leak into error tracking as an unhandled
- *     failure (see PostHog issue with fingerprint
+ *     cleared/replaced the blocking row) -- retry the upsert in a bounded
+ *     loop instead of re-throwing the raw postgres driver error, which
+ *     embeds the full parameterized SQL statement (Stripe customer id,
+ *     price id, amount) and would otherwise leak into error tracking as an
+ *     unhandled failure (see PostHog issue with fingerprint
  *     fd4b8e92...0cd8c38026b41ef8975754971710a3c3918b05c66578ebb82a6a2623ab77c8e0cc73d428).
+ *   - The loop, not a single retry, matters under repeated contention: if
+ *     a *second* live subscription lands on the retry attempt, that must
+ *     still surface as `SubscriptionUserConflictError` (not escape as a
+ *     raw error), and if the self-resolving race repeats past the retry
+ *     budget, the final failure must still be a sanitized error rather
+ *     than the raw driver error.
  */
 
 import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
@@ -61,9 +67,9 @@ function stubInsert(...results: Array<"ok" | Error>) {
     return onConflictDoUpdate;
 }
 
-/** Stubs `db.select().from().where().orderBy().limit()` used by `getSubscriptionByUserId`. */
-function stubSelect(rows: Array<Record<string, unknown>>) {
-    (db.select as unknown as Mock).mockReturnValue({
+/** Builds one `db.select()` chain result resolving to `rows`. */
+function selectResult(rows: Array<Record<string, unknown>>) {
+    return {
         from: vi.fn().mockReturnValue({
             where: vi.fn().mockReturnValue({
                 orderBy: vi.fn().mockReturnValue({
@@ -71,7 +77,12 @@ function stubSelect(rows: Array<Record<string, unknown>>) {
                 }),
             }),
         }),
-    });
+    };
+}
+
+/** Stubs `db.select().from().where().orderBy().limit()` used by `getSubscriptionByUserId`. */
+function stubSelect(rows: Array<Record<string, unknown>>) {
+    (db.select as unknown as Mock).mockReturnValue(selectResult(rows));
 }
 
 const baseInput = {
@@ -132,15 +143,53 @@ describe("upsertSubscription", () => {
         expect(onConflictDoUpdate).toHaveBeenCalledTimes(2);
     });
 
-    it("does not swallow the raw driver error if the retry itself fails", async () => {
-        const conflictError = uniqueViolation();
-        const onConflictDoUpdate = stubInsert(conflictError, uniqueViolation());
+    it("throws SubscriptionUserConflictError, not a raw driver error, when a second live subscription lands on the retry", async () => {
+        // Attempt 1 fails; the lookup right after finds nothing (the race
+        // looked self-resolved), so it retries. But before attempt 2 lands,
+        // a *different* webhook inserts another live subscription for this
+        // user, so attempt 2 also violates the index -- this time there IS
+        // a genuine conflicting row on the next lookup.
+        const onConflictDoUpdate = stubInsert(
+            uniqueViolation(),
+            uniqueViolation(),
+        );
+        const select = db.select as unknown as Mock;
+        select
+            .mockImplementationOnce(() => selectResult([]))
+            .mockImplementationOnce(() =>
+                selectResult([
+                    { id: "sub_other", userId: "u1", status: "active" },
+                ]),
+            );
+
+        const error = await upsertSubscription(baseInput).catch((e) => e);
+
+        expect(error).toBeInstanceOf(SubscriptionUserConflictError);
+        expect(error).toMatchObject({
+            userId: "u1",
+            conflictingSubscriptionId: "sub_other",
+        });
+        expect(onConflictDoUpdate).toHaveBeenCalledTimes(2);
+        expect(select).toHaveBeenCalledTimes(2);
+    });
+
+    it("gives up with a sanitized error (not the raw driver error) after exhausting retries on a persistently self-resolving race", async () => {
+        const onConflictDoUpdate = stubInsert(
+            uniqueViolation(),
+            uniqueViolation(),
+            uniqueViolation(),
+        );
+        // Every lookup finds no conflicting row -- the race never actually
+        // resolves within the retry budget.
         stubSelect([]);
 
-        await expect(upsertSubscription(baseInput)).rejects.toThrow(
-            /duplicate key value violates unique constraint/,
-        );
-        expect(onConflictDoUpdate).toHaveBeenCalledTimes(2);
+        const error = await upsertSubscription(baseInput).catch((e) => e);
+
+        expect(error).not.toBeInstanceOf(SubscriptionUserConflictError);
+        expect(error.message).not.toMatch(/insert into "subscriptions"/);
+        expect(error.message).toMatch(/did not resolve after 3 attempts/);
+        // 3 attempts total: the initial call + 2 retries.
+        expect(onConflictDoUpdate).toHaveBeenCalledTimes(3);
     });
 
     it("rethrows unrelated errors immediately without looking up a conflict", async () => {

@@ -145,27 +145,42 @@ export async function upsertSubscription(
             set: updateValues,
         });
 
-    try {
-        await doUpsert();
-    } catch (error) {
-        if (
-            !isUniqueViolationOn(error, "subscriptions_user_id_active_unique")
-        ) {
-            throw error;
+    // Bounded retry loop, not a single retry: a *genuine* conflict (a
+    // different subscription is still live) throws immediately below --
+    // no amount of looping fixes that, it needs `SubscriptionUserConflictError`
+    // recovery from the caller. The loop exists only for the self-resolving
+    // race (the blocking row clears between our failed insert and the
+    // lookup): under concurrent webhook delivery that race can in
+    // principle repeat, and a *second* unresolved unique violation must
+    // not escape as the raw driver error -- which embeds the full
+    // parameterized SQL statement (Stripe customer id, price id, amount)
+    // and would leak into error tracking as an unhandled failure.
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        try {
+            await doUpsert();
+            return;
+        } catch (error) {
+            if (
+                !isUniqueViolationOn(
+                    error,
+                    "subscriptions_user_id_active_unique",
+                )
+            ) {
+                throw error;
+            }
+            const other = await getSubscriptionByUserId(input.userId);
+            if (other && other.id !== input.id) {
+                throw new SubscriptionUserConflictError(input.userId, other.id);
+            }
+            if (attempt === MAX_ATTEMPTS) {
+                throw new Error(
+                    `Failed to upsert subscription ${input.id} for user ${input.userId}: unique-constraint race did not resolve after ${MAX_ATTEMPTS} attempts`,
+                );
+            }
+            // Conflicting row is gone -- the index isn't violated anymore.
+            // Loop and retry rather than re-throwing.
         }
-        const other = await getSubscriptionByUserId(input.userId);
-        if (other && other.id !== input.id) {
-            throw new SubscriptionUserConflictError(input.userId, other.id);
-        }
-        // The conflicting row is gone (a concurrent webhook resolved it
-        // between our failed insert and this lookup) -- the unique index
-        // is no longer violated, so retry once instead of re-throwing the
-        // raw driver error. That raw error carries the full parameterized
-        // SQL statement (Stripe customer id, price id, amount) and would
-        // otherwise leak into error tracking as an unhandled failure, and
-        // callers here only know how to recover from
-        // `SubscriptionUserConflictError`, not a raw driver error.
-        await doUpsert();
     }
 }
 
