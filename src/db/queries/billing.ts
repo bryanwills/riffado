@@ -139,19 +139,33 @@ export async function upsertSubscription(
           }
         : { ...baseValues, updatedAt: new Date() };
 
-    try {
-        await db.insert(subscriptions).values(insertValues).onConflictDoUpdate({
+    const doUpsert = () =>
+        db.insert(subscriptions).values(insertValues).onConflictDoUpdate({
             target: subscriptions.id,
             set: updateValues,
         });
+
+    try {
+        await doUpsert();
     } catch (error) {
-        if (isUniqueViolationOn(error, "subscriptions_user_id_active_unique")) {
-            const other = await getSubscriptionByUserId(input.userId);
-            if (other && other.id !== input.id) {
-                throw new SubscriptionUserConflictError(input.userId, other.id);
-            }
+        if (
+            !isUniqueViolationOn(error, "subscriptions_user_id_active_unique")
+        ) {
+            throw error;
         }
-        throw error;
+        const other = await getSubscriptionByUserId(input.userId);
+        if (other && other.id !== input.id) {
+            throw new SubscriptionUserConflictError(input.userId, other.id);
+        }
+        // The conflicting row is gone (a concurrent webhook resolved it
+        // between our failed insert and this lookup) -- the unique index
+        // is no longer violated, so retry once instead of re-throwing the
+        // raw driver error. That raw error carries the full parameterized
+        // SQL statement (Stripe customer id, price id, amount) and would
+        // otherwise leak into error tracking as an unhandled failure, and
+        // callers here only know how to recover from
+        // `SubscriptionUserConflictError`, not a raw driver error.
+        await doUpsert();
     }
 }
 
