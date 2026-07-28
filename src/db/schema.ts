@@ -434,6 +434,14 @@ export const userSettings = pgTable("user_settings", {
     syncInterval: integer("sync_interval").notNull().default(300000),
     // Auto-transcribe new recordings
     autoTranscribe: boolean("auto_transcribe").notNull().default(false),
+    // Auto-summarize after a successful transcription (manual, post-sync
+    // auto, or re-transcribe). Runs the same summary pipeline as the
+    // manual button. Orthogonal to autoTranscribe -- fires on any
+    // successful transcription, not just auto-transcribed ones.
+    autoSummarize: boolean("auto_summarize").notNull().default(false),
+    // Preset id override for the auto-summary path. Null inherits
+    // summaryPrompt.selectedPrompt (the manual default).
+    autoSummarizePreset: text("auto_summarize_preset"),
     // Sync settings
     autoSyncEnabled: boolean("auto_sync_enabled").notNull().default(true),
     syncOnMount: boolean("sync_on_mount").notNull().default(true),
