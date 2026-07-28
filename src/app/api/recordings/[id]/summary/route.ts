@@ -97,12 +97,20 @@ export const POST = apiHandler<IdContext>(async (request, context) => {
     const selectedPreset = presetId || promptConfig.selectedPrompt || "general";
     let promptTemplate = getSummaryPromptById(selectedPreset, promptConfig);
 
+    // Tracks the prompt id actually used, which can differ from
+    // `selectedPreset` below (e.g. the request or the saved default
+    // pointed at a custom prompt that was since deleted). Returned to the
+    // client so it can warn instead of silently generating with a
+    // different prompt than the one the user picked.
+    let usedPromptId = selectedPreset;
+
     if (!promptTemplate) {
         const defaultConfig = getDefaultSummaryPromptConfig();
         promptTemplate = getSummaryPromptById(
             defaultConfig.selectedPrompt,
             defaultConfig,
         );
+        usedPromptId = defaultConfig.selectedPrompt;
         if (!promptTemplate) {
             throw new AppError(
                 ErrorCode.INTERNAL_ERROR,
@@ -266,6 +274,8 @@ export const POST = apiHandler<IdContext>(async (request, context) => {
         actionItems,
         provider: credentials.provider,
         model,
+        promptId: usedPromptId,
+        promptFallback: usedPromptId !== selectedPreset,
     });
 });
 
