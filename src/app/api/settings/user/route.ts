@@ -2,7 +2,10 @@ import { eq } from "drizzle-orm";
 import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { userSettings, users } from "@/db/schema";
-import { normalizeAiOutputLanguage } from "@/lib/ai/summary-presets";
+import {
+    isValidSummaryPromptConfig,
+    normalizeAiOutputLanguage,
+} from "@/lib/ai/summary-presets";
 import { requireApiSession } from "@/lib/auth-server";
 import { decryptJsonField, encryptJsonField } from "@/lib/encryption/fields";
 import { AppError, apiHandler, ErrorCode } from "@/lib/errors";
@@ -229,6 +232,17 @@ export const PUT = apiHandler(async (request: Request) => {
     }
 
     if (body.summaryPrompt !== undefined) {
+        if (
+            body.summaryPrompt !== null &&
+            !isValidSummaryPromptConfig(body.summaryPrompt)
+        ) {
+            throw new AppError(
+                ErrorCode.INVALID_INPUT,
+                "Invalid summaryPrompt value",
+                400,
+                { field: "summaryPrompt" },
+            );
+        }
         const encrypted =
             body.summaryPrompt === null
                 ? null

@@ -37,6 +37,14 @@ export interface GenerateSummaryResult {
     actionItems: string[];
     provider: string;
     model: string;
+    /** Prompt id actually used. Can differ from the requested preset. */
+    promptId: string;
+    /**
+     * True when the requested/saved prompt id couldn't be resolved (e.g. a
+     * custom prompt deleted from another tab) and generation fell back to
+     * the default prompt instead.
+     */
+    promptFallback: boolean;
 }
 
 /** Coarse length bucket -- never send raw transcript length or content. */
@@ -131,12 +139,20 @@ export async function generateSummaryForRecording(
         opts.presetId || promptConfig.selectedPrompt || "general";
     let promptTemplate = getSummaryPromptById(selectedPreset, promptConfig);
 
+    // Tracks the prompt id actually used, which can differ from
+    // `selectedPreset` below (e.g. the request or the saved default
+    // pointed at a custom prompt that was since deleted). Returned to the
+    // caller so it can warn instead of silently generating with a
+    // different prompt than the one requested.
+    let usedPromptId = selectedPreset;
+
     if (!promptTemplate) {
         const defaultConfig = getDefaultSummaryPromptConfig();
         promptTemplate = getSummaryPromptById(
             defaultConfig.selectedPrompt,
             defaultConfig,
         );
+        usedPromptId = defaultConfig.selectedPrompt;
         if (!promptTemplate) {
             throw new AppError(
                 ErrorCode.INTERNAL_ERROR,
@@ -306,5 +322,7 @@ export async function generateSummaryForRecording(
         actionItems,
         provider: credentials.provider,
         model,
+        promptId: usedPromptId,
+        promptFallback: usedPromptId !== selectedPreset,
     };
 }
