@@ -59,7 +59,17 @@ export function useTranscriptionSummary({
     const [summaryData, setSummaryData] = useState<SummaryData | null>(null);
     const [isSummarizing, setIsSummarizing] = useState(false);
     const [summaryExpanded, setSummaryExpanded] = useState(true);
-    const [summaryPreset, setSummaryPreset] = useState("general");
+    const [summaryPreset, setSummaryPresetState] = useState("general");
+    // Set the moment the caller (the per-recording dropdown) makes an
+    // explicit choice. Guards the settings-fetch effect below from
+    // clobbering that choice if the fetch resolves afterwards -- without
+    // this, picking a prompt right after the page loads could get silently
+    // reverted back to the saved default a moment later.
+    const userSelectedPresetRef = useRef(false);
+    const setSummaryPreset = useCallback((preset: string) => {
+        userSelectedPresetRef.current = true;
+        setSummaryPresetState(preset);
+    }, []);
     const [summaryPromptOptions, setSummaryPromptOptions] = useState<
         SummaryPromptOption[]
     >(() =>
@@ -88,8 +98,8 @@ export function useTranscriptionSummary({
                     | null
                     | undefined;
                 if (!config) return;
-                if (config.selectedPrompt) {
-                    setSummaryPreset(config.selectedPrompt);
+                if (config.selectedPrompt && !userSelectedPresetRef.current) {
+                    setSummaryPresetState(config.selectedPrompt);
                 }
                 setSummaryPromptOptions(
                     getAllSummaryPrompts(config).map((p) => ({
