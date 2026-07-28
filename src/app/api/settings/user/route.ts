@@ -30,6 +30,8 @@ const ENUM_FIELD_SETS: Record<string, ReadonlySet<string>> = Object.fromEntries(
 
 const DEFAULT_SETTINGS = {
     autoTranscribe: false,
+    autoSummarize: false,
+    autoSummarizePreset: null,
     syncInterval: 300000,
     autoSyncEnabled: true,
     syncOnMount: true,
@@ -68,6 +70,8 @@ const DEFAULT_SETTINGS = {
 
 const SETTINGS_FIELDS = [
     "autoTranscribe",
+    "autoSummarize",
+    "autoSummarizePreset",
     "syncInterval",
     "autoSyncEnabled",
     "syncOnMount",
