@@ -109,6 +109,7 @@ export function SummarySection() {
     };
 
     const handleSaveCustomPrompt = async (prompt: EditingPrompt) => {
+        const previousPrompts = customPrompts;
         const isEdit = !!prompt.id;
         const newPrompt: CustomSummaryPrompt = {
             id: prompt.id || nanoid(),
@@ -134,7 +135,11 @@ export function SummarySection() {
             });
             toast.success("Prompt saved");
         } catch {
-            toast.error("Failed to save prompt");
+            // Roll back the optimistic update -- otherwise a later save
+            // (e.g. a preset change) would echo this rejected mutation
+            // back to the server as if it had succeeded.
+            setCustomPrompts(previousPrompts);
+            toast.error("Failed to save prompt. Changes reverted.");
         }
     };
 
@@ -146,6 +151,8 @@ export function SummarySection() {
             confirmLabel: "Delete",
             destructive: true,
             onConfirm: async () => {
+                const previousPrompts = customPrompts;
+                const previousSelectedPrompt = selectedPrompt;
                 const updatedPrompts = customPrompts.filter((p) => p.id !== id);
                 const newSelectedPrompt =
                     selectedPrompt === id ? "general" : selectedPrompt;
@@ -157,7 +164,10 @@ export function SummarySection() {
                         customPrompts: updatedPrompts,
                     });
                 } catch {
-                    toast.error("Failed to delete prompt");
+                    // Roll back both -- same reasoning as the save path above.
+                    setCustomPrompts(previousPrompts);
+                    setSelectedPrompt(previousSelectedPrompt);
+                    toast.error("Failed to delete prompt. Changes reverted.");
                 }
             },
         });
