@@ -24,6 +24,11 @@ which API surface the transcription worker should use:
   part) — for providers that expose audio-input LLMs instead of a
   dedicated transcription endpoint. Used by OpenRouter routing
   Gemini / GPT-audio / Voxtral.
+- **ElevenLabs-style** (`/v1/speech-to-text`, multipart upload,
+  `xi-api-key` auth) — not OpenAI-compatible. Used by ElevenLabs Scribe,
+  which returns speaker labels via diarization. OpenAI's
+  `gpt-4o-transcribe-diarize` model also returns speaker labels, through
+  the regular Whisper-style endpoint.
 
 Pick a preset, paste your API key, choose a default model, save. Repeat
 for additional providers.
@@ -37,6 +42,7 @@ for additional providers.
 | OpenRouter  | `https://openrouter.ai/api/v1`               | Chat-style transcription; many summarization models in one key   |
 | Together AI | `https://api.together.xyz/v1`                | Cost-effective, broad model selection                            |
 | Azure       | `https://<resource>.openai.azure.com/...`    | Enterprise compliance, deployment-scoped URLs                    |
+| ElevenLabs  | `https://api.elevenlabs.io/v1`               | Scribe transcription; speaker labels; auto language detection    |
 | LM Studio   | `http://localhost:1234/v1`                   | Local, 100% offline                                              |
 | Ollama      | `http://localhost:11434/v1`                  | Local, easy model management                                     |
 | Custom      | *(freeform)*                                 | Anything else OpenAI-compatible                                  |
@@ -61,6 +67,36 @@ Summarization is more forgiving — any chat model that follows the
 OpenAI `chat/completions` shape works. Pick something fast and cheap
 (e.g. `gpt-4o-mini`, `llama-3.1-70b-versatile`) unless you have a
 specific reason to use a larger model.
+
+## Speaker labels
+
+Two providers can return speaker-labelled transcripts, controlled
+differently:
+
+- **ElevenLabs Scribe** — diarization is controlled by **Settings →
+  Transcription → Speaker labels**. Turning it on splits the transcript
+  by speaker:
+
+  ```
+  Speaker 1: Hallo zusammen, schön dass ihr da seid.
+  Speaker 2: Guten Morgen, lass uns anfangen.
+  ```
+
+  An optional "Expected speakers" hint (1–32, or Auto) can improve
+  diarization accuracy but is not a hard limit.
+- **OpenAI `gpt-4o-transcribe-diarize`** — diarization is selected by
+  picking that model as the provider's default (or per-recording)
+  model, not by the Speaker labels toggle. The toggle has no effect on
+  OpenAI's output either way.
+
+Providers other than these two ignore diarization entirely and return
+an unlabeled transcript.
+
+Language is auto-detected by default (**Settings → Transcription →
+Default transcription language → Auto-detect**), so German recordings
+need no configuration; ElevenLabs Scribe returns the detected language
+alongside the transcript. Set an explicit language only to override
+auto-detect for noisy recordings or close-language mixups.
 
 ## What gets sent to the provider
 
